@@ -54,6 +54,12 @@ Hai file Markdown cùng thư mục là bản đọc không cần trình duyệt:
 
 ---
 
+### Lưu tiến độ và đồng bộ giữa thiết bị
+
+- Mọi thao tác được lưu tự động vào localStorage của trình duyệt, theo từng địa chỉ mở app (file, localhost, github.io là ba kho riêng). File ghi âm không lưu.
+- **Đồng bộ tự động** (Cài đặt → Đồng bộ): dán một GitHub token của tài khoản nghiadevdevops có quyền **Gists: Read and write** (fine-grained token, Account permissions → Gists). App tự tìm hoặc tạo gist **secret** `ielts-roadmap-progress.json`, kéo bản mới hơn về khi mở app và đẩy lên ~4 giây sau mỗi thay đổi. Token chỉ nằm trong trình duyệt đó, không có trong file xuất JSON; mỗi thiết bị dán token một lần. Xung đột giải quyết theo thời điểm lưu muộn hơn.
+- Vẫn nên **Xuất JSON** mỗi tuần làm bản dự phòng.
+
 ## 3. Bảy nguyên tắc (đọc trước khi bắt đầu, đọc lại khi nản)
 
 1. **Nền trước, mẹo sau.** 12 tuần đầu không đụng đề IELTS trừ bài kiểm tra đầu vào. Mẹo làm bài chỉ có tác dụng khi bạn đã hiểu được 70% nội dung. Học mẹo khi chưa có nền là lý do nhiều người kẹt ở 5.0 suốt hai năm.

@@ -85,6 +85,7 @@ textarea{min-height:120px;line-height:1.6}
   <a href="#/guide/sources" data-r="guide/sources">Nguồn luyện thêm (link)</a>
   <a href="#/guide/resources" data-r="guide/resources">Tài nguyên</a>
   <a href="#/settings" data-r="settings">Cài đặt & sao lưu</a>
+  <div class="grp" id="syncst" style="text-transform:none;letter-spacing:0;margin-top:14px"></div>
 </aside>
 <main id="main"></main>
 </div>
@@ -116,10 +117,28 @@ textarea{min-height:120px;line-height:1.6}
 <script>
 /* ================= STORAGE ================= */
 const KEY='ielts.roadmap.v1';
-const DEF={startDate:'',curWeek:1,testType:'academic',newPerDay:20,voice:'',done:{},tasks:{},quiz:{},cards:{},newToday:{d:'',n:0},mocks:[],errors:[],writings:[],speakings:[],activity:{},weekDone:{},reading:{},dict:{ok:0,bad:0}};
+const DEF={startDate:'',curWeek:1,testType:'academic',newPerDay:20,voice:'',done:{},tasks:{},quiz:{},cards:{},newToday:{d:'',n:0},mocks:[],errors:[],writings:[],speakings:[],activity:{},weekDone:{},reading:{},dict:{ok:0,bad:0},updatedAt:0};
 let S=load();
 function load(){try{const j=JSON.parse(localStorage.getItem(KEY)||'null');return Object.assign(JSON.parse(JSON.stringify(DEF)),j||{});}catch(e){return JSON.parse(JSON.stringify(DEF));}}
-function save(){localStorage.setItem(KEY,JSON.stringify(S));}
+function save(){S.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(S));scheduleSyncPush();}
+
+/* ================= SYNC QUA GITHUB GIST ================= */
+const SYNC_KEY='ielts.sync.v1',GIST_FILE='ielts-roadmap-progress.json',GIST_DESC='IELTS Roadmap progress (auto-sync)';
+let SYNC=(()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY)||'{}');}catch(e){return {};}})();let syncTimer=null;
+function syncSave(){localStorage.setItem(SYNC_KEY,JSON.stringify(SYNC));}
+function syncOn(){return !!(SYNC.token&&SYNC.gistId);}
+async function gh(path,opts){opts=opts||{};const r=await fetch('https://api.github.com'+path,Object.assign({},opts,{headers:Object.assign({'Authorization':'Bearer '+SYNC.token,'Accept':'application/vnd.github+json','Content-Type':'application/json'},opts.headers||{})}));if(!r.ok){let t='';try{t=(await r.text()).slice(0,160);}catch(e){}throw new Error('GitHub '+r.status+(r.status===401?' — token sai hoặc hết hạn':r.status===403?' — token thiếu quyền Gists':'')+(t?' · '+t:''));}return r.status===204?null:r.json();}
+async function syncFindGist(){for(let page=1;page<=5;page++){const list=await gh('/gists?per_page=100&page='+page);const g=(list||[]).find(x=>x.files&&x.files[GIST_FILE]);if(g)return g.id;if(!list||list.length<100)break;}return null;}
+async function syncPull(){const g=await gh('/gists/'+SYNC.gistId);const f=g.files&&g.files[GIST_FILE];if(!f)throw new Error('Gist không có file tiến độ');let c=f.content;if(f.truncated){const r=await fetch(f.raw_url);c=await r.text();}return JSON.parse(c);}
+function syncPayload(){const o={};Object.keys(S).forEach(k=>{if(!k.startsWith('_'))o[k]=S[k];});return JSON.stringify(o);}
+async function syncPush(){const body={description:GIST_DESC,files:{}};body.files[GIST_FILE]={content:syncPayload()};if(SYNC.gistId){await gh('/gists/'+SYNC.gistId,{method:'PATCH',body:JSON.stringify(body)});}else{body.public=false;const g=await gh('/gists',{method:'POST',body:JSON.stringify(body)});SYNC.gistId=g.id;}SYNC.lastSync=Date.now();SYNC.lastPushedAt=S.updatedAt||0;SYNC.error='';syncSave();setSyncStatus();}
+function adoptRemote(remote){const cur=JSON.parse(JSON.stringify(S));Object.keys(cur).forEach(k=>{if(k.startsWith('_'))remote[k]=cur[k];});S=Object.assign(JSON.parse(JSON.stringify(DEF)),remote);localStorage.setItem(KEY,JSON.stringify(S));SYNC.lastSync=Date.now();SYNC.lastPushedAt=S.updatedAt||0;SYNC.error='';syncSave();}
+async function syncNow(reason){if(!syncOn()||SYNC.busy)return;SYNC.busy=true;setSyncStatus('đang đồng bộ…');try{const remote=await syncPull();const ru=remote.updatedAt||0,lu=S.updatedAt||0;if(ru>lu){adoptRemote(remote);toast('Đã kéo tiến độ mới hơn từ Gist');if(reason!=='connect')route();}else if(lu>ru||(SYNC.lastPushedAt||0)<lu){await syncPush();}else{SYNC.lastSync=Date.now();SYNC.error='';syncSave();}}catch(e){SYNC.error=String(e.message||e);syncSave();toast('Đồng bộ lỗi: '+SYNC.error.slice(0,80));}finally{SYNC.busy=false;setSyncStatus();}}
+async function syncConnect(token){SYNC={token:token.trim()};syncSave();const me=await gh('/user');SYNC.login=me.login;syncSave();const id=await syncFindGist();if(id){SYNC.gistId=id;syncSave();await syncNow('connect');}else{await syncPush();toast('Đã tạo gist riêng tư và đẩy tiến độ lên');}}
+function syncDisconnect(){SYNC={};localStorage.removeItem(SYNC_KEY);if(syncTimer)clearTimeout(syncTimer);setSyncStatus();}
+function scheduleSyncPush(){if(!syncOn())return;if(syncTimer)clearTimeout(syncTimer);syncTimer=setTimeout(()=>{syncTimer=null;if((S.updatedAt||0)>(SYNC.lastPushedAt||0)&&!SYNC.busy){SYNC.busy=true;setSyncStatus('đang đẩy…');syncPush().catch(e=>{SYNC.error=String(e.message||e);syncSave();setSyncStatus();}).finally(()=>{SYNC.busy=false;setSyncStatus();});}},4000);}
+function setSyncStatus(txt){const el=document.getElementById('syncst');if(!el)return;if(!SYNC.token){el.innerHTML='<a href="#/settings" style="color:#7f8a98">☁ Đồng bộ: chưa bật</a>';return;}const t=txt||(SYNC.error?'lỗi — xem Cài đặt':SYNC.lastSync?'✓ '+new Date(SYNC.lastSync).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}):'đã kết nối');el.innerHTML=`<a href="#/settings" style="color:${SYNC.error?'var(--warn)':'#7f8a98'}">☁ ${esc(SYNC.login||'GitHub')}: ${esc(t)}</a>`;}
+function syncInit(){setSyncStatus();if(syncOn())syncNow('load');document.addEventListener('visibilitychange',()=>{if(document.hidden&&syncOn()&&(S.updatedAt||0)>(SYNC.lastPushedAt||0)&&!SYNC.busy){if(syncTimer){clearTimeout(syncTimer);syncTimer=null;}const body={description:GIST_DESC,files:{}};body.files[GIST_FILE]={content:syncPayload()};fetch('https://api.github.com/gists/'+SYNC.gistId,{method:'PATCH',keepalive:true,headers:{'Authorization':'Bearer '+SYNC.token,'Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>{if(r.ok){SYNC.lastSync=Date.now();SYNC.lastPushedAt=S.updatedAt;syncSave();}}).catch(()=>{});}});}
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
 function act(){S.activity[today()]=(S.activity[today()]||0)+1;save();}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800);}
@@ -755,6 +774,14 @@ function vSettings(){
  <label>Loại bài thi<select name="testType"><option value="academic" ${S.testType==='academic'?'selected':''}>Academic</option><option value="general" ${S.testType==='general'?'selected':''}>General Training</option></select></label><label>Thẻ từ vựng mới mỗi ngày<input class="in" type="number" name="newPerDay" min="5" max="60" value="${S.newPerDay}"></label>
  <label>Giọng đọc máy (TTS)<select name="voice"><option value="">Tự chọn (ưu tiên en-GB)</option>${VOICES.map(v=>`<option value="${esc(v.name)}" ${S.voice===v.name?'selected':''}>${esc(v.name)} (${v.lang})</option>`).join('')}</select></label></div>
  <div class="row"><button class="btn primary">Lưu</button><button class="btn" type="button" id="tv">🔊 Thử giọng</button></div></form></div>
+ <div class="card"><h3>☁ Đồng bộ giữa các thiết bị (GitHub Gist riêng tư)</h3>
+ ${SYNC.token?`<div class="kv"><span>Tài khoản</span><span><b>${esc(SYNC.login||'—')}</b></span><span>Gist</span><span>${SYNC.gistId?`<a href="https://gist.github.com/${esc(SYNC.gistId)}" target="_blank" rel="noopener">${esc(SYNC.gistId.slice(0,12))}… ↗</a> (secret)`:'chưa tạo'}</span><span>Lần đồng bộ cuối</span><span>${SYNC.lastSync?new Date(SYNC.lastSync).toLocaleString('vi-VN'):'—'}</span><span>Tiến độ local</span><span>${S.updatedAt?new Date(S.updatedAt).toLocaleString('vi-VN'):'—'}</span>${SYNC.error?`<span>Lỗi</span><span style="color:var(--bad)">${esc(SYNC.error)}</span>`:''}</div>
+ <div class="row"><button class="btn primary" id="syncnow">Đồng bộ ngay</button><button class="btn" id="syncpush">Đẩy local lên (ghi đè Gist)</button><button class="btn" id="syncpull">Kéo Gist về (ghi đè local)</button><button class="btn bad" id="syncoff">Ngắt kết nối trên máy này</button></div>
+ <p class="small muted">Tự động: khi mở app sẽ kéo bản mới hơn về; mỗi thay đổi được đẩy lên sau ~4 giây. Hai máy cùng sửa khi offline thì bản có thời điểm lưu muộn hơn thắng.</p>`
+ :`<p class="small">Nhập một GitHub token của tài khoản <b>nghiadevdevops</b> có quyền <b>Gists</b>. Token chỉ lưu trong trình duyệt này (không nằm trong file xuất JSON), app sẽ tự tìm gist "<code>${GIST_FILE}</code>" trong tài khoản; chưa có thì tạo gist <b>secret</b> mới.</p>
+ <details class="small"><summary>Cách tạo token (2 phút)</summary><ol><li>GitHub → ảnh đại diện → <b>Settings</b> → cuối menu trái <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li><li>Tên: <i>ielts-roadmap sync</i>; Expiration: 1 năm (hoặc No expiration nếu có). Repository access: <b>Public repositories</b> (không cần repo nào).</li><li>Mục <b>Account permissions</b> → <b>Gists</b> → <b>Read and write</b>. Không cần quyền nào khác.</li><li>Generate → copy chuỗi bắt đầu bằng <code>github_pat_</code> → dán vào ô dưới. (Token classic với scope <code>gist</code> cũng dùng được.)</li></ol><p>Thu hồi bất cứ lúc nào tại Developer settings. Trên điện thoại chỉ cần dán cùng token này một lần.</p></details>
+ <div class="row"><input class="in" id="synctok" type="password" placeholder="github_pat_… hoặc ghp_…" style="max-width:420px" autocomplete="off"><button class="btn primary" id="syncon">Kết nối & đồng bộ</button></div><p class="small muted" id="syncmsg"></p>`}
+ </div>
  <div class="card"><h3>Sao lưu</h3><p class="small muted">Toàn bộ tiến độ nằm trong localStorage của trình duyệt này. Xuất file JSON định kỳ (ví dụ mỗi tuần) để không mất khi xóa cache hoặc đổi máy.</p><div class="row"><button class="btn" id="exp">Xuất JSON</button><label class="btn">Nhập JSON<input type="file" id="imp" accept="application/json" style="display:none"></label><button class="btn bad" id="reset">Xóa toàn bộ tiến độ</button></div></div>
  <div class="card"><h3>Về bộ tài liệu</h3>${md(window.ABOUT||'')}</div>`;
  document.getElementById('sf').onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);S.startDate=f.get('startDate');S.curWeek=+f.get('curWeek');S.testType=f.get('testType');S.newPerDay=+f.get('newPerDay');S.voice=f.get('voice');save();toast('Đã lưu');};
@@ -762,8 +789,14 @@ function vSettings(){
  document.getElementById('exp').onclick=()=>{const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='ielts-roadmap-'+today()+'.json';a.click();};
  document.getElementById('imp').onchange=e=>{const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);if(!j.done||!j.cards)throw 0;S=Object.assign(JSON.parse(JSON.stringify(DEF)),j);save();toast('Đã nhập');vSettings();}catch(x){toast('File không hợp lệ');}};r.readAsText(e.target.files[0]);};
  document.getElementById('reset').onclick=()=>{if(confirm('Xóa toàn bộ tiến độ, thẻ, bài viết, sổ lỗi? Không hoàn tác được.')){localStorage.removeItem(KEY);S=load();vSettings();}};
+ const on=document.getElementById('syncon');if(on)on.onclick=async()=>{const tok=document.getElementById('synctok').value.trim();const msg=document.getElementById('syncmsg');if(tok.length<20){msg.textContent='Token quá ngắn.';return;}on.disabled=true;msg.textContent='Đang kiểm tra token và tìm gist…';try{await syncConnect(tok);msg.textContent='Đã kết nối.';vSettings();}catch(e){SYNC={};localStorage.removeItem(SYNC_KEY);msg.textContent='Không kết nối được: '+(e.message||e);on.disabled=false;setSyncStatus();}};
+ const sn=document.getElementById('syncnow');if(sn)sn.onclick=async()=>{sn.disabled=true;await syncNow('manual');vSettings();};
+ const sp=document.getElementById('syncpush');if(sp)sp.onclick=async()=>{if(!confirm('Ghi đè bản trên Gist bằng tiến độ của máy này?'))return;try{S.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(S));await syncPush();toast('Đã đẩy lên');}catch(e){toast('Lỗi: '+(e.message||e));}vSettings();};
+ const pl=document.getElementById('syncpull');if(pl)pl.onclick=async()=>{if(!confirm('Ghi đè tiến độ máy này bằng bản trên Gist?'))return;try{const remote=await syncPull();adoptRemote(remote);toast('Đã kéo về');}catch(e){toast('Lỗi: '+(e.message||e));}vSettings();};
+ const off=document.getElementById('syncoff');if(off)off.onclick=()=>{if(confirm('Xóa token khỏi máy này? Tiến độ local và gist vẫn giữ nguyên.')){syncDisconnect();vSettings();}};
 }
 route();
+syncInit();
 </script>
 </body>
 </html>
